@@ -2,52 +2,41 @@ name: Scraping settimanale capienze carceri
 
 on:
   schedule:
-    # GitHub Actions usa l'orario UTC e non gestisce l'ora legale: due cron
-    # coprono estate e inverno, poi un controllo fa proseguire solo il run
-    # che cade davvero alle 10 in Italia. Lo script è comunque idempotente.
-    - cron: "5 8 * * 1"   # lunedì 10:05 con ora legale (CEST)
-    - cron: "5 9 * * 1"   # lunedì 10:05 con ora solare (CET)
+    # GitHub fa partire i cron "quando può": ritardi di ore sono normali, per
+    # questo non si controlla l'orario di esecuzione. Che il job parta alle 8
+    # o alle 13 non cambia nulla: i dati di capienza sono giornalieri e lo
+    # script è idempotente per data. Basta quindi un solo cron, a un minuto
+    # poco affollato per ridurre il ritardo.
+    - cron: "23 6 * * 1"   # lunedì mattina (8:23 con ora legale, 7:23 con ora solare)
   workflow_dispatch: {}    # consente anche il lancio manuale dal sito
 
 permissions:
   contents: write
 
+# Evita che due esecuzioni si sovrappongano e scrivano righe doppie.
+concurrency:
+  group: scraping-capienze
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
-      - name: Controlla che in Italia siano le 10
-        id: orario
-        run: |
-          ORA=$(TZ=Europe/Rome date +%H)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$ORA" = "10" ]; then
-            echo "Esecuzione confermata (ora italiana: $ORA)."
-            echo "procedi=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Ora italiana $ORA, non è il run giusto: salto."
-            echo "procedi=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Scarica il repository
-        if: steps.orario.outputs.procedi == 'true'
         uses: actions/checkout@v4
 
       - name: Prepara Python
-        if: steps.orario.outputs.procedi == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Installa le dipendenze
-        if: steps.orario.outputs.procedi == 'true'
         run: pip install -r requirements.txt
 
       - name: Esegui lo scraping
-        if: steps.orario.outputs.procedi == 'true'
         run: python scraper_capienze.py
 
       - name: Salva il CSV aggiornato nel repository
-        if: steps.orario.outputs.procedi == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -56,5 +45,6 @@ jobs:
             echo "Nessuna modifica da salvare."
           else
             git commit -m "Rilevazione capienze del $(TZ=Europe/Rome date +%d/%m/%Y)"
+            git pull --rebase
             git push
           fi
